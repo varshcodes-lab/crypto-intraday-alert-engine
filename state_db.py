@@ -4,6 +4,8 @@ from datetime import datetime
 DB_PATH = "state.db"
 
 
+
+
 def get_conn():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
 
@@ -14,7 +16,7 @@ def init_db():
     conn = get_conn()
     cur = conn.cursor()
 
-    
+   
     cur.execute("""
     CREATE TABLE IF NOT EXISTS system_status (
         key TEXT PRIMARY KEY,
@@ -22,13 +24,13 @@ def init_db():
     )
     """)
 
-    
+  
     cur.execute("""
     CREATE TABLE IF NOT EXISTS alerts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         symbol TEXT,
         trend TEXT,
-        score TEXT,
+        score INTEGER,
         reasons TEXT,
         entry REAL,
         stop_loss REAL,
@@ -37,7 +39,7 @@ def init_db():
     )
     """)
 
-    
+   
     cur.execute("""
     CREATE TABLE IF NOT EXISTS confidence_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,7 +48,7 @@ def init_db():
     )
     """)
 
-   
+    
     cur.execute("""
     CREATE TABLE IF NOT EXISTS active_trades (
         symbol TEXT PRIMARY KEY,
@@ -61,6 +63,15 @@ def init_db():
     )
     """)
 
+    
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS last_prices (
+        symbol TEXT PRIMARY KEY,
+        price REAL,
+        updated_at TEXT
+    )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -70,22 +81,42 @@ def init_db():
 def update_system_status(key, value):
     conn = get_conn()
     cur = conn.cursor()
+
     cur.execute(
         "INSERT OR REPLACE INTO system_status (key, value) VALUES (?, ?)",
         (key, str(value))
     )
+
     conn.commit()
     conn.close()
+
+
+
+
+def update_last_price(symbol, price):
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("""
+    INSERT OR REPLACE INTO last_prices (symbol, price, updated_at)
+    VALUES (?, ?, ?)
+    """, (symbol, price, datetime.utcnow().isoformat()))
+
+    conn.commit()
+    conn.close()
+
 
 
 
 def insert_confidence(score):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO confidence_history (score, created_at) VALUES (?, ?)",
-        (score, datetime.utcnow().isoformat())
-    )
+
+    cur.execute("""
+    INSERT INTO confidence_history (score, created_at)
+    VALUES (?, ?)
+    """, (score, datetime.utcnow().isoformat()))
+
     conn.commit()
     conn.close()
 
@@ -93,6 +124,7 @@ def insert_confidence(score):
 def insert_alert(signal):
     conn = get_conn()
     cur = conn.cursor()
+
     cur.execute("""
     INSERT INTO alerts
     (symbol, trend, score, reasons, entry, stop_loss, target, created_at)
@@ -100,13 +132,14 @@ def insert_alert(signal):
     """, (
         signal["symbol"],
         signal["trend"],
-        str(signal["score"]),
+        signal["score"],
         " | ".join(signal["reasons"]),
         signal["trade"]["entry"],
         signal["trade"]["stop_loss"],
         signal["trade"]["target"],
         datetime.utcnow().isoformat()
     ))
+
     conn.commit()
     conn.close()
 
@@ -116,26 +149,25 @@ def get_active_trade(symbol):
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("""
-    SELECT symbol, entry, stop_loss, target, rr, quantity, trend
+    row = cur.execute("""
+    SELECT symbol, entry, stop_loss, target, quantity, trend
     FROM active_trades
     WHERE symbol=? AND status='OPEN'
-    """, (symbol,))
+    """, (symbol,)).fetchone()
 
-    row = cur.fetchone()
     conn.close()
 
-    if row:
-        return {
-            "symbol": row[0],
-            "entry": row[1],
-            "stop_loss": row[2],
-            "target": row[3],
-            "rr": row[4],
-            "quantity": row[5],
-            "trend": row[6],
-        }
-    return None
+    if not row:
+        return None
+
+    return {
+        "symbol": row[0],
+        "entry": row[1],
+        "stop_loss": row[2],
+        "target": row[3],
+        "quantity": row[4],
+        "trend": row[5]
+    }
 
 
 def create_active_trade(signal):
@@ -164,9 +196,12 @@ def create_active_trade(signal):
 def close_active_trade(symbol):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute(
-        "UPDATE active_trades SET status='CLOSED' WHERE symbol=?",
-        (symbol,)
-    )
+
+    cur.execute("""
+    UPDATE active_trades
+    SET status='CLOSED'
+    WHERE symbol=?
+    """, (symbol,))
+
     conn.commit()
     conn.close()
